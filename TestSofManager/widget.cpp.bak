@@ -1,0 +1,681 @@
+#include "widget.h"
+#include "ui_widget.h"
+
+Widget::Widget(QWidget *parent) :
+    QWidget(parent),
+    ui(new Ui::Widget)
+{
+    ui->setupUi(this);
+    ui->VerFilelistWidget->setAcceptDrops(false);
+    setAcceptDrops(true);
+
+    m_publicIconMap[TREE_ITEM_ICON_Project] = QIcon(QStringLiteral(":/treeIcon/res_treeItemIcon/Project.png"));
+    m_publicIconMap[TREE_ITEM_ICON_folder] = QIcon(QStringLiteral(":/treeIcon/res_treeItemIcon/folder.png"));
+    m_publicIconMap[TREE_ITEM_ICON_folderAnsys] = QIcon(QStringLiteral(":/treeIcon/res_treeItemIcon/folder-ansys.png"));
+    m_publicIconMap[TREE_ITEM_ICON_TdmsGroup] = QIcon(QStringLiteral(":/treeIcon/res_treeItemIcon/group.png"));
+    m_publicIconMap[TREE_ITEM_ICON_TdmsChannel] = QIcon(QStringLiteral(":/treeIcon/res_treeItemIcon/channel.png"));
+    m_publicIconMap[TREE_ITEM_ICON_folderOriginal] = QIcon(QStringLiteral(":/treeIcon/res_treeItemIcon/folder_original.png"));
+    m_publicIconMap[TREE_ITEM_ICON_DataItem] = QIcon(QStringLiteral(":/treeIcon/res_treeItemIcon/dataItem.png"));
+    //initOperTree();
+    //界面初始化时，设定产品的代号和名称以及单元的代号和名称的文本编辑栏为不可输入状态
+    //ui->ProIdlineEdit->setFocusPolicy(Qt::NoFocus);
+    //ui->ProNamelineEdit->setFocusPolicy(Qt::NoFocus);
+    //ui->UnitIdlineEdit->setFocusPolicy(Qt::NoFocus);
+    //ui->UnitNamelineEdit->setFocusPolicy(Qt::NoFocus);
+
+    initShowProTree();
+
+    initShowVerTree();
+
+    connectDB();
+    createFileTable();
+
+    createProductTable();
+
+    createUnitTable();
+
+    createVersionTable();
+
+}
+
+Widget::~Widget()
+{
+    delete ui;
+}
+void
+Widget::dragEnterEvent(QDragEnterEvent *event)
+{
+    if(event->mimeData()->hasFormat("text/uri-list"))
+    {
+        event->acceptProposedAction();
+    }
+}
+
+void
+Widget::dropEvent(QDropEvent *event)
+{
+    //窗口部件放下一个对象时，调用该函数
+    QList<QUrl>urls=event->mimeData()->urls();
+    if(urls.isEmpty())
+    {
+        return;
+    }
+    QList<QUrl>::iterator it;
+    for(it=urls.begin();it!=urls.end();it++)
+    {
+        QUrl url=*it;
+        QFileInfo fileInfo(it->toLocalFile());
+        if(fileInfo.isFile())
+        {
+            //是文件就直接加进来
+            ui->VerFilelistWidget->addItem(fileInfo.filePath());            
+        }
+        else if(fileInfo.isDir())
+        {
+            //是文件路径就循环读取
+            QFileInfoList fileInfoList=Widget::GetAllFileLst(fileInfo.filePath());
+            for(QFileInfo fileInfo1:fileInfoList)//the range-based for statements
+            {
+                ui->VerFilelistWidget->addItem(fileInfo1.filePath());               
+            }
+        }
+    }
+   for( int i=0;i<ui->VerFilelistWidget->count();i++)
+   {
+    filePath[i]=ui->VerFilelistWidget->item(i)->text();
+   }
+}
+
+QFileInfoList
+Widget::GetAllFileLst(QString path)
+{
+    QDir dir(path);
+    QFileInfoList file_list =dir.entryInfoList(QDir::Files|QDir::Hidden|QDir::NoSymLinks);
+     QFileInfoList folder_list=dir.entryInfoList(QDir::Dirs|QDir::NoDotAndDotDot);
+
+     for(int i=0;i!=folder_list.size();i++)
+     {
+         QString name=folder_list.at(i).absoluteFilePath();
+         QFileInfoList child_file_list=GetAllFileLst(name);
+         file_list.append(child_file_list);
+     }
+    return file_list;
+}
+
+QString
+Widget::ReadtestFile(QString str)//读取数据 CompareForm::
+{
+   QFile file(str);//文件路径 也可以用相对路径
+   if(!file.open(QIODevice::ReadOnly|QIODevice::Text))
+   {
+      QMessageBox::about(NULL,"文件","文件打开失败");
+
+   }
+   QTextStream in(&file);//文件流
+   QString line=in.readLine();//读取一行，文件里面一行的内容
+    QString *fileCon=new QString[1000];//假设一个文件里面代码最多有1000行
+
+    int i=0;
+   while(!line.isNull())
+   {
+       fileCon[i]=line;
+       i++;
+       line=in.readLine();      
+   }
+   QString filecontent;//单个文件里面的所有内容
+   for(int j=0;j<i;j++)//fileCon
+   {
+       filecontent.append(fileCon[j]);
+   }
+   Widget::productMD5(filecontent);
+   return filecontent;
+
+}
+
+
+QString
+Widget::productMD5(QString str)
+{
+    QByteArray ba=str.toLatin1();
+    char*str1=ba.data();
+    QString strrr=QString::fromLocal8Bit(str1);
+    QByteArray bytePwd=strrr.toUtf8();
+    QByteArray bytePwdMd5=QCryptographicHash::hash(bytePwd,QCryptographicHash::Md5);
+    QString strPwdMd5=bytePwdMd5.toHex();//32字节的MD5码
+    return strPwdMd5;
+}
+void Widget::connectDB()
+{
+    //添加数据库
+    QString driver="QSQLITE";
+    QString userName="root";
+    QString password="123456";
+    QString DBName="test.db";
+
+    QSqlDatabase dbs=QSqlDatabase::addDatabase(driver);
+    dbs.setUserName(userName);
+    dbs.setPassword(password);
+    dbs.setDatabaseName(DBName);
+
+    //打开数据库
+    if(!dbs.open())
+    {
+        QMessageBox::warning(this,"数据库打开失败",dbs.lastError().text());
+        qDebug()<<dbs.lastError()<<endl;
+        return;
+    }
+    else
+    {
+        db=dbs;
+    }
+}
+
+void Widget::createFileTable()
+{
+    QSqlQuery query;
+    QString sql="create table if not exists test_file2 (file_id int auto_increment primary key,file_name varchar(255))";
+    query.prepare(sql);
+    if(!query.exec())
+    {
+        QMessageBox::about(NULL,"建test_file表失败",query.lastError().driverText());
+    }
+}
+
+void Widget::createProductTable()
+{
+    QSqlQuery query;
+    QString sql="create table if not exists product (pro_id int auto_increment primary key,pro_num int,pro_name varchar(255))";
+    query.prepare(sql);
+    if(!query.exec())
+    {
+        QMessageBox::about(NULL,"建product表失败",query.lastError().driverText());
+    }
+}
+
+void Widget::createUnitTable()
+{
+    QSqlQuery query;
+    QString sql="create table if not exists Unit (unit_id int auto_increment primary key,unit_num int,unit_name varchar(255),pro_id int,foreign key(pro_id)"
+                " references product(pro_id) on delete cascade on update cascade)";
+    query.prepare(sql);
+    if(!query.exec())
+    {
+        QMessageBox::about(NULL,"建unit表失败",query.lastError().driverText());
+    }
+}
+
+void Widget::createVersionTable()
+{
+    QSqlQuery query;
+    QString sql="create table if not exists Version (v_id int auto_increment primary key,v_name varchar(255),v_label varchar(255),v_state varchar(255),pro_id int,unit_id int"
+                ",foreign key(pro_id) references product(pro_id) on delete cascade on update cascade,foreign key(unit_id) references Unit(unit_id) on delete cascade on update cascade)";
+    query.prepare(sql);
+    if(!query.exec())
+    {
+        QMessageBox::about(NULL,"建version表失败",query.lastError().driverText());
+        qDebug()<<query.lastError();
+    }
+}
+
+void Widget::intoFileData()//插入数据到test_file数据表
+{
+
+     boolean bol;
+
+     if(Widget::db.open())
+    {
+
+        int fileId;
+        QString str="select file_id from test_file2";
+        QSqlQuery query;
+        query.prepare(str);
+        query.exec();
+        while(query.next())
+        {
+            fileId=query.value(0).toInt();
+
+        }
+            int j=ui->VerFilelistWidget->count()+fileId;
+            int i=fileId+1;
+
+            for(;i<j+1;i++)
+            {               
+                QSqlQuery query;               
+                query.prepare("insert into test_file2 (file_id,file_name) values (?, ?)");
+                query.addBindValue(i);
+                query.addBindValue(ui->VerFilelistWidget->item(i-fileId-1)->text());                
+                bol=query.exec();
+                if(!bol)
+                {
+                     QSqlError lastError=query.lastError();
+                     QMessageBox::about(NULL,"插入失败",lastError.driverText());
+                    qDebug()<<"query error:"<<query.lastError();
+
+                }
+            }
+            i=0;
+    }
+    Widget::db.close();
+    boln=bol;
+}
+
+void Widget::intoProductData()//插入数据到product数据表
+{
+     boolean bol;
+     if(Widget::db.open())
+    {
+        int proId;
+        QString str="select pro_id from product";
+        QSqlQuery query1;
+        query1.prepare(str);
+        query1.exec();
+        while(query1.next())
+        {
+            proId=query1.value(0).toInt();
+        }
+            int i=proId+1;
+                QSqlQuery query;
+                query.prepare("insert into product (pro_id,pro_num,pro_name) values (?, ?, ?)");
+                query.addBindValue(i);           
+                query.addBindValue(ui->ProIdlineEdit->text());//pro_num
+                query.addBindValue(ui->ProNamelineEdit->text());//pro_name
+                bol=query.exec();
+                if(!bol)
+                {
+                     QSqlError lastError=query.lastError();
+                     QMessageBox::about(NULL,"插入失败",lastError.driverText());
+                    qDebug()<<"query error:"<<query.lastError();
+            }
+            i=0;
+    }
+    Widget::db.close();
+    boln=bol;
+}
+
+void Widget::intoUnitData()//插入数据到Unit数据表
+{
+    int proId;
+    if(Widget::db.open())//获取pro_id
+    {
+        QSqlQuery query;
+        QString sql=QString("select pro_id from product where pro_num='%1'")
+                .arg(ui->ProIdlineEdit->text());        
+        query.exec(sql);
+
+        while(query.next())
+        {
+            proId=query.value(0).toInt();
+
+        }
+    }
+    Widget::db.close();
+
+
+
+     boolean bol;
+     if(Widget::db.open())
+    {
+        int unitId;
+        QString str="select unit_id from Unit";//防止unit_id的不衔接
+        QSqlQuery query1;
+        query1.prepare(str);
+        query1.exec();
+        while(query1.next())
+        {
+            unitId=query1.value(0).toInt();
+        }
+            int i=unitId+1;
+                QSqlQuery query;
+                query.prepare("insert into Unit (unit_id,unit_num,unit_name,pro_id) values (?, ?, ?, ?)");
+                query.addBindValue(i);               
+                query.addBindValue(ui->UnitIdlineEdit->text());//unit_num
+
+                query.addBindValue(ui->UnitNamelineEdit->text());//unit_name
+
+                query.addBindValue(proId);//pro_id
+
+                bol=query.exec();
+                if(!bol)
+                {
+                     QSqlError lastError=query.lastError();
+                     QMessageBox::about(NULL,"插入失败",lastError.driverText());
+                    qDebug()<<"query error:"<<query.lastError();
+            }
+            i=0;
+    }
+    Widget::db.close();
+    boln=bol;
+}
+
+void Widget::intoVersionData()//插入数据到Version数据表
+{
+    int proId;
+    if(Widget::db.open())//获取pro_id
+    {
+        QSqlQuery query;
+        QString sql=QString("select pro_id from product where pro_num='%1'")
+                .arg(ui->ProIdlineEdit->text());       
+        query.exec(sql);
+
+        while(query.next())
+        {
+            proId=query.value(0).toInt();
+
+        }
+    }
+    Widget::db.close();
+
+
+    int unitId;
+    if(Widget::db.open())//获取unit_id
+    {
+        QSqlQuery query;
+        QString sql=QString("select unit_id from Unit where unit_num='%1' and pro_id='%2'")
+                .arg(ui->UnitIdlineEdit->text()).arg(QString::number(proId,10));      
+        query.exec(sql);
+
+        while(query.next())
+        {
+            unitId=query.value(0).toInt();
+
+        }
+    }
+    Widget::db.close();
+
+     boolean bol;
+     if(Widget::db.open())
+    {
+        int vId;
+        QString str="select v_id from Version";//防止v_id不连续
+        QSqlQuery query1;
+        query1.prepare(str);
+        query1.exec();
+        while(query1.next())
+        {
+            vId=query1.value(0).toInt();
+        }
+            int i=vId+1;
+                QSqlQuery query;               
+                query.prepare("insert into Version (v_id,v_name,v_state,pro_id,unit_id) values (?, ?, ?, ?, ?)");
+                query.addBindValue(i);
+                query.addBindValue(ui->VerNamelineEdit->text());//v_name
+                query.addBindValue(ui->VerStatelineEdit->text());//v_state
+                query.addBindValue(proId);
+                query.addBindValue(unitId);
+
+                bol=query.exec();
+                if(!bol)
+                {
+                     QSqlError lastError=query.lastError();
+                     QMessageBox::about(NULL,"插入失败",lastError.driverText());
+                    qDebug()<<"query error:"<<query.lastError();
+            }
+            i=0;
+    }
+    Widget::db.close();
+    boln=bol;
+}
+
+
+void Widget::updateProductData()
+{
+    if(Widget::db.open())
+    {
+        int proId;
+        QSqlQuery query;
+        QString sql=QString("select pro_id from product where pro_num='%1'")
+                .arg(ui->ProIdlineEdit->text());        
+        query.exec(sql);
+
+        while(query.next())
+        {
+            proId=query.value(0).toInt();
+        }       
+        sql=QString("UPDATE product SET pro_num='%1',pro_name='%2' where pro_id='%3'")
+                .arg(ui->ProIdlineEdit->text()).arg(ui->ProNamelineEdit->text()).arg(QString::number(proId,10));        
+        if(!query.exec(sql))
+        {
+             QSqlError lastError=query.lastError();
+             QMessageBox::about(NULL,"插入失败",lastError.driverText());
+            qDebug()<<"query error:"<<query.lastError();
+        }
+        else
+        QMessageBox::about(NULL,"更新","成功");
+
+    }
+    Widget::db.close();
+}
+
+void updateUnitData()
+{
+
+}
+
+void updateVersionData()
+{
+
+}
+
+void updateFileData()
+{
+
+}
+
+//显示结果
+void Widget::initShowProTree()
+{
+    QStandardItemModel* model = new QStandardItemModel(ui->ProtreeView);
+    model->setHorizontalHeaderLabels(QStringList()<<QStringLiteral("产品单元名")                                    
+                                     <<QStringLiteral("信息"));//treeView的头标签
+
+
+    //项目2
+    QStandardItem* itemProject = new QStandardItem(m_publicIconMap[QStringLiteral("treeItem_Project")],QStringLiteral("产品和代号"));
+    model->appendRow(itemProject);
+    QStandardItem* itemFolder;
+    for(int i =0;i<3;++i)
+    {
+        itemFolder = new QStandardItem(m_publicIconMap[QStringLiteral("treeItem_folder")],QStringLiteral("单元%1和代号").arg(i+1));        
+        itemProject->appendRow(itemFolder);       
+        for(int j=0;j<i+1;++j)
+        {
+             QStandardItem* item = new QStandardItem(m_publicIconMap[QStringLiteral("treeItem_folder")],QStringLiteral("版本%1").arg(j+1));             
+             itemFolder->appendRow(item);
+             itemFolder->setChild(item->index().row(),1,new QStandardItem(QStringLiteral("版本状态和标签").arg(j+1)));
+        }
+    }
+    //关联项目属性改变的信号和槽
+    //connect(model,&QStandardItemModel::itemChanged,this,&Widget::treeItemChanged);
+    //connect(model,SIGNAL(itemChanged(QStandardItem*)),this,SLOT(treeItemChanged(QStandardItem*)));
+    ui->ProtreeView->setModel(model);
+    //ui->VertreeView->setAutoFillBackground(true);
+
+
+
+}
+
+
+void Widget::initShowVerTree()
+{
+    QStandardItemModel* model = new QStandardItemModel(ui->VertreeView);
+    model->setHorizontalHeaderLabels(QStringList()<<QStringLiteral("版本文件名")                                     
+                                     <<QStringLiteral("信息"));//treeView的头标签
+    //项目2
+    QStandardItem* itemProject = new QStandardItem(m_publicIconMap[QStringLiteral("treeItem_Project")],QStringLiteral("版本"));
+    model->appendRow(itemProject);
+    QStandardItem* itemFolder;
+    for(int i =0;i<3;++i)
+    {
+        itemFolder = new QStandardItem(m_publicIconMap[QStringLiteral("treeItem_folder")],QStringLiteral("文件夹%1").arg(i+1));
+        QStandardItem* itemFolderDes = new QStandardItem(m_publicIconMap[QStringLiteral("treeItem_group")],QStringLiteral("文件夹%1标签").arg(i+1));
+        itemProject->appendRow(itemFolder);
+        itemProject->setChild(itemFolder->index().row(),1,itemFolderDes);
+        for(int j=0;j<i+1;++j)
+        {
+             QStandardItem* item = new QStandardItem(m_publicIconMap[QStringLiteral("treeItem_dataItem")],QStringLiteral("文件%1").arg(j+1));             
+             itemFolder->appendRow(item);
+             itemFolder->setChild(item->index().row(),1,new QStandardItem(QStringLiteral("文件标签").arg(j+1)));
+        }
+    }
+    //关联项目属性改变的信号和槽
+    //connect(model,&QStandardItemModel::itemChanged,this,&Widget::treeItemChanged);
+    //connect(model,SIGNAL(itemChanged(QStandardItem*)),this,SLOT(treeItemChanged(QStandardItem*)));
+    ui->VertreeView->setModel(model);
+    ui->VertreeView->setAutoFillBackground(true);
+
+
+
+}
+
+void Widget::on_sureButton_clicked()
+{
+
+    if(!(ui->ProIdlineEdit->text().isEmpty())&&!(ui->ProNamelineEdit->text().isEmpty())&&!(ui->UnitIdlineEdit->text().isEmpty())&&!(ui->UnitNamelineEdit->text().isEmpty())&&!(ui->VerNamelineEdit->text().isEmpty())&&!(ui->VerFilelistWidget->count()==0))
+       {
+            intoProductData();
+            intoUnitData();
+            intoVersionData();
+            intoFileData();            
+            QMessageBox::warning(this,"数据","入库成功");
+
+            ui->VerNamelineEdit->clear();
+            ui->VerStatelineEdit->clear();
+            ui->VerFilelistWidget->clear();
+
+            ui->ProIdlineEdit->setFocusPolicy(Qt::NoFocus);
+            ui->ProNamelineEdit->setFocusPolicy(Qt::NoFocus);
+            ui->UnitIdlineEdit->setFocusPolicy(Qt::NoFocus);
+            ui->UnitNamelineEdit->setFocusPolicy(Qt::NoFocus);
+       }
+
+    else
+            QMessageBox::about(NULL,"请输入","产品的完整信息");
+
+
+}
+
+void Widget::on_okNewProButton_clicked()
+{
+    ui->ProIdlineEdit->setFocusPolicy(Qt::ClickFocus);
+    ui->ProNamelineEdit->setFocusPolicy(Qt::ClickFocus);
+}
+
+void Widget::on_okNewUniButton_clicked()
+{
+    ui->UnitIdlineEdit->setFocusPolicy(Qt::ClickFocus);
+    ui->UnitNamelineEdit->setFocusPolicy(Qt::ClickFocus);
+}
+
+void Widget::on_cancelButton_clicked()
+{
+    ui->ProIdlineEdit->clear();
+    ui->ProNamelineEdit->clear();
+    ui->UnitIdlineEdit->clear();
+    ui->UnitNamelineEdit->clear();
+    ui->VerNamelineEdit->clear();
+    ui->VerStatelineEdit->clear();
+    ui->VerFilelistWidget->clear();
+}
+
+void Widget::on_searchButton_clicked()
+{   
+    if(ui->ProIdlineEdit->focusPolicy()==Qt::NoFocus)
+        QMessageBox::about(NULL,"请点击","更改错误确认按钮");        
+    else
+    {
+        if(ui->ProIdlineEdit->text().isEmpty())
+            QMessageBox::about(NULL,"请输入","查询的产品号");
+       else
+        {
+            int proId;
+            if(Widget::db.open())//获取pro_id
+            {
+                QSqlQuery query;
+                QString sql=QString("select pro_id from product where pro_num='%1'")
+                        .arg(ui->ProIdlineEdit->text());                
+                query.exec(sql);
+
+                while(query.next())
+                {
+                    proId=query.value(0).toInt();
+                }
+            }
+            Widget::db.close();
+
+
+            int unitId;
+            if(Widget::db.open())//获取unit_id
+            {
+                QSqlQuery query;
+                QString sql=QString("select unit_id from Unit where unit_num='%1' and pro_id='%2'")
+                        .arg(ui->UnitIdlineEdit->text()).arg(QString::number(proId,10));               
+                query.exec(sql);
+
+                while(query.next())
+                {
+                    unitId=query.value(0).toInt();
+                }
+            }
+            Widget::db.close();
+
+            if(Widget::db.open()) //  Widget::db.close();
+            {
+                QSqlQuery query;
+                QString sql=QString("select pro_num,pro_name from product where pro_num='%1'")
+                        .arg(ui->ProIdlineEdit->text());
+                QString sql1=QString("select unit_num,unit_name from Unit where pro_num='%1'")
+                        .arg(ui->UnitIdlineEdit->text());
+                QString sql2=QString("select v_name,v_state from Version where pro_id='%1' and unit_id='%1'")
+                        .arg(QString::number(proId,10)).arg(QString::number(unitId,10));                
+                query.exec(sql);
+                while(query.next())
+                {                    
+                    ui->ProIdlineEdit->setText(query.value(0).toString());
+                    ui->ProNamelineEdit->setText(query.value(1).toString());                    
+                }
+
+                query.exec(sql1);
+                while(query.next())
+                {                    
+                    ui->UnitIdlineEdit->setText(query.value(0).toString());
+                    ui->UnitNamelineEdit->setText(query.value(1).toString());                   
+                }
+
+                query.exec(sql2);
+                while(query.next())
+                {                    
+                    ui->VerNamelineEdit->setText(query.value(0).toString());
+                    ui->VerStatelineEdit->setText(query.value(1).toString());                    
+                }
+
+                 QMessageBox::about(NULL,"请","重新输入版本文件");
+            }
+             Widget::db.close();
+        }
+
+    }
+
+}
+
+void Widget::on_updateButton_clicked()
+{
+    updateProductData();
+    ui->ProIdlineEdit->clear();
+    ui->ProNamelineEdit->clear();
+    ui->UnitIdlineEdit->clear();
+    ui->UnitNamelineEdit->clear();
+    ui->VerNamelineEdit->clear();
+    ui->VerStatelineEdit->clear();
+    ui->VerFilelistWidget->clear();
+    //updateUnitData();
+    //updateVersionData();
+    //updateFileData();
+}
+
+void Widget::on_updateSureButton_clicked()
+{
+    ui->ProIdlineEdit->setFocusPolicy(Qt::ClickFocus);
+    ui->ProNamelineEdit->setFocusPolicy(Qt::ClickFocus);
+    ui->UnitIdlineEdit->setFocusPolicy(Qt::ClickFocus);
+    ui->UnitNamelineEdit->setFocusPolicy(Qt::ClickFocus);
+}
